@@ -43,6 +43,35 @@ BAHNHOEFE = {
     "Augsburg Hbf": {"ds100": "MA", "eva": "8000013"},
 }
 
+# DS100 → Bahnhofsname Mapping (wichtigste Bahnhöfe)
+DS100_NAMEN = {
+    "BL": "Berlin Hbf", "BLS": "Berlin Südkreuz", "BSPD": "Berlin-Spandau",
+    "MH": "München Hbf", "MOP": "München Ost", "MPA": "München-Pasing",
+    "AH": "Hamburg Hbf", "AHAR": "Hamburg-Harburg", "ADAT": "Hamburg Dammtor",
+    "KK": "Köln Hbf", "KKDZ": "Köln Messe/Deutz", "KKTZ": "Köln/Bonn Flughafen",
+    "FF": "Frankfurt (Main) Hbf", "FFLU": "Frankfurt (M) Flughafen",
+    "TS": "Stuttgart Hbf", "TF": "Stuttgart Flughafen",
+    "KD": "Düsseldorf Hbf", "KDFF": "Düsseldorf Flughafen",
+    "HH": "Hannover Hbf",
+    "NN": "Nürnberg Hbf",
+    "LL": "Leipzig Hbf",
+    "DD": "Dresden Hbf",
+    "HB": "Bremen Hbf",
+    "EDO": "Dortmund Hbf",
+    "EE": "Essen Hbf",
+    "RM": "Mannheim Hbf",
+    "RK": "Karlsruhe Hbf",
+    "RF": "Freiburg (Breisg) Hbf",
+    "MA": "Augsburg Hbf",
+    "UE": "Erfurt Hbf", "UE  F": "Erfurt Hbf",
+    "LH": "Halle (Saale) Hbf",
+    "NBG": "Bamberg",
+    "MIN": "Ingolstadt Hbf",
+    "NUL": "Erlangen",
+    "LW": "Wittenberg",
+    "UTHE": "Gotha",
+}
+
 # CO2-Emissionsfaktoren (g/Pkm) - Quelle: UBA 2023
 CO2_FAKTOREN = {
     "ice": 29,      # ICE Fernverkehr
@@ -89,17 +118,17 @@ def get_strecke_details(von_ds100: str, nach_ds100: str) -> dict:
             routenpunkte = route['routenpunkte']
             letzter = routenpunkte[-1]
 
-            # Wichtige Stationen extrahieren (größere Bahnhöfe)
-            stationen = []
+            # Nur Kundenhalte extrahieren
+            kundenhalte = []
             for punkt in routenpunkte:
-                ds100 = punkt.get('ds100', '')
-                km = punkt.get('laufende_hm', 0) / 10
                 halt = punkt.get('haltart', '')
-                stationen.append({
-                    'ds100': ds100,
-                    'km': km,
-                    'halt': halt
-                })
+                if halt == 'kundenhalt':
+                    ds100 = punkt.get('ds100', '')
+                    km = punkt.get('laufende_hm', 0) / 10
+                    kundenhalte.append({
+                        'ds100': ds100,
+                        'km': km,
+                    })
 
             # VzG-Strecken sammeln
             vzg_strecken = []
@@ -119,8 +148,8 @@ def get_strecke_details(von_ds100: str, nach_ds100: str) -> dict:
             return {
                 "strecke_km": round(letzter['laufende_hm'] / 10, 1),
                 "fahrzeit_min": letzter['technische_fahrzeit_info']['ankunft_min'],
-                "anzahl_stationen": len(routenpunkte),
-                "stationen": stationen,
+                "anzahl_betriebsstellen": len(routenpunkte),
+                "kundenhalte": kundenhalte,
                 "vzg_strecken": vzg_strecken,
                 "erfolg": True
             }
@@ -275,39 +304,45 @@ if st.button("🔍 Berechnen", type="primary", use_container_width=True):
             # Fahrstrecke
             st.subheader("🗺️ Fahrstrecke")
 
-            # VzG-Strecken anzeigen
-            vzg = strecke.get("vzg_strecken", [])
-            if vzg:
-                route_text = f"**{von}**"
-                for i, s in enumerate(vzg):
-                    route_text += f" → VzG {s['nr']}"
-                route_text += f" → **{nach}**"
-                st.markdown(route_text)
+            # Kundenhalte anzeigen
+            kundenhalte = strecke.get("kundenhalte", [])
+            if kundenhalte:
+                st.markdown(f"**{len(kundenhalte)} Halte auf dieser Strecke:**")
 
-                with st.expander(f"📍 Alle {strecke['anzahl_stationen']} Betriebsstellen anzeigen"):
-                    # Tabelle mit Stationen
-                    stationen = strecke.get("stationen", [])
+                # Halte als übersichtliche Liste
+                halte_text = ""
+                for i, halt in enumerate(kundenhalte):
+                    ds100 = halt['ds100']
+                    name = DS100_NAMEN.get(ds100, ds100)  # Name oder DS100-Code
+                    km_wert = halt['km']
 
-                    # Nur jeden 5. Punkt zeigen (sonst zu viele)
-                    wichtige = [stationen[0]]  # Start
-                    for i, s in enumerate(stationen[1:-1], 1):
-                        if i % 10 == 0:  # Jeden 10. Punkt
-                            wichtige.append(s)
-                    wichtige.append(stationen[-1])  # Ende
+                    if i == 0:
+                        halte_text += f"🚉 **{name}** (Start)\n\n"
+                    elif i == len(kundenhalte) - 1:
+                        halte_text += f"🏁 **{name}** ({km_wert:.0f} km)\n"
+                    else:
+                        halte_text += f"→ {name} ({km_wert:.0f} km)\n\n"
 
-                    st.markdown("| DS100 | km | Status |")
-                    st.markdown("|-------|---:|--------|")
-                    for s in wichtige:
-                        st.markdown(f"| {s['ds100']} | {s['km']:.1f} | {s['halt']} |")
+                st.markdown(halte_text)
 
-                    st.caption(f"Vollständige Route: {strecke['anzahl_stationen']} Betriebsstellen")
+                # VzG-Strecken
+                vzg = strecke.get("vzg_strecken", [])
+                if vzg:
+                    with st.expander("🛤️ VzG-Strecken (technische Details)"):
+                        for s in vzg:
+                            st.markdown(f"- VzG **{s['nr']}**: {s['von']} → {s['bis']}")
 
             # Details
             with st.expander("📋 Details für Dokumentation"):
+                vzg = strecke.get("vzg_strecken", [])
+                halte_namen = [DS100_NAMEN.get(h['ds100'], h['ds100']) for h in kundenhalte]
+
                 st.markdown(f"""
 **Route:** {von} → {nach}
 **Strecke:** {km} km {'(Hin- und Rückfahrt: ' + str(km*2) + ' km)' if hin_rueck else ''}
 **Fahrzeit:** {fahrzeit} Minuten ({round(fahrzeit/60, 1)} Stunden)
+**Halte:** {' → '.join(halte_namen)}
+
 **Anzahl Personen:** {anzahl_personen}
 **Personenkilometer:** {km_gesamt:.0f} Pkm
 
