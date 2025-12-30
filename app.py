@@ -43,15 +43,16 @@ BAHNHOEFE = {
     "Augsburg Hbf": {"ds100": "MA", "eva": "8000013"},
 }
 
-# DS100 → Bahnhofsname Mapping (wichtigste Bahnhöfe)
+# DS100 → Bahnhofsname Mapping (wichtige ICE-Halte)
 DS100_NAMEN = {
+    # Hauptbahnhöfe
     "BL": "Berlin Hbf", "BLS": "Berlin Südkreuz", "BSPD": "Berlin-Spandau",
     "MH": "München Hbf", "MOP": "München Ost", "MPA": "München-Pasing",
     "AH": "Hamburg Hbf", "AHAR": "Hamburg-Harburg", "ADAT": "Hamburg Dammtor",
-    "KK": "Köln Hbf", "KKDZ": "Köln Messe/Deutz", "KKTZ": "Köln/Bonn Flughafen",
-    "FF": "Frankfurt (Main) Hbf", "FFLU": "Frankfurt (M) Flughafen",
-    "TS": "Stuttgart Hbf", "TF": "Stuttgart Flughafen",
-    "KD": "Düsseldorf Hbf", "KDFF": "Düsseldorf Flughafen",
+    "KK": "Köln Hbf", "KKDZ": "Köln Messe/Deutz",
+    "FF": "Frankfurt (Main) Hbf", "FFLU": "Frankfurt Flughafen",
+    "TS": "Stuttgart Hbf",
+    "KD": "Düsseldorf Hbf",
     "HH": "Hannover Hbf",
     "NN": "Nürnberg Hbf",
     "LL": "Leipzig Hbf",
@@ -63,13 +64,57 @@ DS100_NAMEN = {
     "RK": "Karlsruhe Hbf",
     "RF": "Freiburg (Breisg) Hbf",
     "MA": "Augsburg Hbf",
-    "UE": "Erfurt Hbf", "UE  F": "Erfurt Hbf",
+    # Wichtige ICE-Halte
+    "UE": "Erfurt Hbf", "UE  L": "Erfurt Hbf", "UE  F": "Erfurt Hbf",
+    "UE  O": "Erfurt Hbf", "UE  G": "Erfurt Hbf", "UE  P": "Erfurt Hbf",
     "LH": "Halle (Saale) Hbf",
+    "LW": "Lutherstadt Wittenberg",
     "NBG": "Bamberg",
+    "NBG S": "Bamberg",
     "MIN": "Ingolstadt Hbf",
     "NUL": "Erlangen",
-    "LW": "Wittenberg",
     "UTHE": "Gotha",
+    "UWE": "Weimar",
+    "UJ": "Jena Paradies",
+    "UJEW": "Jena West",
+    "USA": "Saalfeld",
+    "NLI": "Lichtenfels",
+    "NCO": "Coburg",
+    "RH": "Heidelberg Hbf",
+    "RWI": "Wiesloch-Walldorf",
+    "RBH": "Bruchsal",
+    "TBH": "Bietigheim-Bissingen",
+    "TLB": "Ludwigsburg",
+    "TU": "Ulm Hbf",
+    "TG": "Göppingen",
+    "TPU": "Plochingen",
+    "MDAG": "Dachau",
+    "MRO": "Rosenheim",
+    "MGS": "Garmisch-Partenkirchen",
+    "WR": "Schwerin Hbf",
+    "WGW": "Güstrow",
+    "WRSK": "Rostock Hbf",
+    "AAL": "Hamburg-Altona",
+    "AWE": "Wedel",
+    "EBHF": "Bochum Hbf",
+    "EDG": "Duisburg Hbf",
+    "EEST": "Essen Süd",
+    "EG": "Gelsenkirchen Hbf",
+    "EHM": "Hamm (Westf)",
+    "EMST": "Münster (Westf) Hbf",
+    "KO": "Koblenz Hbf",
+    "KBO": "Bonn Hbf",
+    "KBON": "Bonn-Beuel",
+    "SSB": "Saarbrücken Hbf",
+    "FKW": "Kassel-Wilhelmshöhe",
+    "FFU": "Fulda",
+    "FGI": "Gießen",
+    "FMZ": "Mainz Hbf",
+    "FWI": "Wiesbaden Hbf",
+    "FLG": "Limburg Süd",
+    "FMF": "Montabaur",
+    "NWÜ": "Würzburg Hbf",
+    "NAH": "Aschaffenburg Hbf",
 }
 
 # CO2-Emissionsfaktoren (g/Pkm) - Quelle: UBA 2023
@@ -118,17 +163,23 @@ def get_strecke_details(von_ds100: str, nach_ds100: str) -> dict:
             routenpunkte = route['routenpunkte']
             letzter = routenpunkte[-1]
 
-            # Nur Kundenhalte extrahieren
-            kundenhalte = []
+            # Wichtige Bahnhöfe auf der Route finden (die in DS100_NAMEN sind)
+            wichtige_halte = []
+            gesehene_namen = set()
             for punkt in routenpunkte:
-                halt = punkt.get('haltart', '')
-                if halt == 'kundenhalt':
-                    ds100 = punkt.get('ds100', '')
+                ds100 = punkt.get('ds100', '')
+                # Prüfe ob dieser Bahnhof ein wichtiger ICE-Halt ist
+                if ds100 in DS100_NAMEN:
+                    name = DS100_NAMEN[ds100]
                     km = punkt.get('laufende_hm', 0) / 10
-                    kundenhalte.append({
-                        'ds100': ds100,
-                        'km': km,
-                    })
+                    # Duplikate vermeiden (z.B. bei Bahnhofsteilen wie UE L, UE F)
+                    if name not in gesehene_namen:
+                        gesehene_namen.add(name)
+                        wichtige_halte.append({
+                            'ds100': ds100,
+                            'name': name,
+                            'km': km,
+                        })
 
             # VzG-Strecken sammeln
             vzg_strecken = []
@@ -149,7 +200,7 @@ def get_strecke_details(von_ds100: str, nach_ds100: str) -> dict:
                 "strecke_km": round(letzter['laufende_hm'] / 10, 1),
                 "fahrzeit_min": letzter['technische_fahrzeit_info']['ankunft_min'],
                 "anzahl_betriebsstellen": len(routenpunkte),
-                "kundenhalte": kundenhalte,
+                "halte": wichtige_halte,
                 "vzg_strecken": vzg_strecken,
                 "erfolg": True
             }
@@ -304,21 +355,20 @@ if st.button("🔍 Berechnen", type="primary", use_container_width=True):
             # Fahrstrecke
             st.subheader("🗺️ Fahrstrecke")
 
-            # Kundenhalte anzeigen
-            kundenhalte = strecke.get("kundenhalte", [])
-            if kundenhalte:
-                st.markdown(f"**{len(kundenhalte)} Halte auf dieser Strecke:**")
+            # Wichtige Halte anzeigen
+            halte = strecke.get("halte", [])
+            if halte:
+                st.markdown(f"**{len(halte)} Halte auf dieser Strecke:**")
 
                 # Halte als übersichtliche Liste
                 halte_text = ""
-                for i, halt in enumerate(kundenhalte):
-                    ds100 = halt['ds100']
-                    name = DS100_NAMEN.get(ds100, ds100)  # Name oder DS100-Code
-                    km_wert = halt['km']
+                for i, h in enumerate(halte):
+                    name = h.get('name', h['ds100'])
+                    km_wert = h['km']
 
                     if i == 0:
                         halte_text += f"🚉 **{name}** (Start)\n\n"
-                    elif i == len(kundenhalte) - 1:
+                    elif i == len(halte) - 1:
                         halte_text += f"🏁 **{name}** ({km_wert:.0f} km)\n"
                     else:
                         halte_text += f"→ {name} ({km_wert:.0f} km)\n\n"
@@ -335,7 +385,7 @@ if st.button("🔍 Berechnen", type="primary", use_container_width=True):
             # Details
             with st.expander("📋 Details für Dokumentation"):
                 vzg = strecke.get("vzg_strecken", [])
-                halte_namen = [DS100_NAMEN.get(h['ds100'], h['ds100']) for h in kundenhalte]
+                halte_namen = [h.get('name', h['ds100']) for h in halte]
 
                 st.markdown(f"""
 **Route:** {von} → {nach}
