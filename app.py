@@ -53,12 +53,15 @@ CO2_FAKTOREN = {
     "flug_lang": 195,  # Langstrecke >1000km
 }
 
+# Preisschätzung pro km (Fallback wenn API keine Preise liefert)
+PREIS_PRO_KM = 0.18  # ca. 18 Cent/km für Flexpreis
+
 
 # === API-Funktionen ===
 
 @st.cache_data(ttl=3600)
-def get_strecke_km(von_ds100: str, nach_ds100: str) -> dict:
-    """Holt Streckenkilometer von der Trassenfinder API."""
+def get_strecke_details(von_ds100: str, nach_ds100: str) -> dict:
+    """Holt Streckenkilometer und Routenverlauf von der Trassenfinder API."""
     payload = {
         "infrastruktur_id": 19,
         "sucheinstellungen": {
@@ -86,10 +89,39 @@ def get_strecke_km(von_ds100: str, nach_ds100: str) -> dict:
             routenpunkte = route['routenpunkte']
             letzter = routenpunkte[-1]
 
+            # Wichtige Stationen extrahieren (größere Bahnhöfe)
+            stationen = []
+            for punkt in routenpunkte:
+                ds100 = punkt.get('ds100', '')
+                km = punkt.get('laufende_hm', 0) / 10
+                halt = punkt.get('haltart', '')
+                stationen.append({
+                    'ds100': ds100,
+                    'km': km,
+                    'halt': halt
+                })
+
+            # VzG-Strecken sammeln
+            vzg_strecken = []
+            for punkt in routenpunkte:
+                seg = punkt.get('naechstes_streckensegment', {})
+                if seg and seg.get('streckennummer'):
+                    nr = seg['streckennummer']
+                    if not vzg_strecken or vzg_strecken[-1]['nr'] != nr:
+                        vzg_strecken.append({
+                            'nr': nr,
+                            'von': seg.get('von', ''),
+                            'bis': seg.get('bis', '')
+                        })
+                    else:
+                        vzg_strecken[-1]['bis'] = seg.get('bis', '')
+
             return {
                 "strecke_km": round(letzter['laufende_hm'] / 10, 1),
                 "fahrzeit_min": letzter['technische_fahrzeit_info']['ankunft_min'],
                 "anzahl_stationen": len(routenpunkte),
+                "stationen": stationen,
+                "vzg_strecken": vzg_strecken,
                 "erfolg": True
             }
     except Exception as e:
@@ -101,42 +133,45 @@ def get_strecke_km(von_ds100: str, nach_ds100: str) -> dict:
 @st.cache_data(ttl=1800)
 def get_ticket_preis(von_eva: str, nach_eva: str) -> dict:
     """Holt Ticketpreis von der DB REST API."""
-    morgen = (datetime.now() + timedelta(days=7)).strftime("%Y-%m-%d")
+    # Versuche mehrere Tage
+    for tage_voraus in [7, 14, 21]:
+        datum = (datetime.now() + timedelta(days=tage_voraus)).strftime("%Y-%m-%d")
 
-    try:
-        response = requests.get(
-            f"{DB_REST_URL}/journeys",
-            params={
-                "from": von_eva,
-                "to": nach_eva,
-                "departure": f"{morgen}T10:00",
-                "results": 3,
-                "tickets": "true"
-            },
-            headers={"Accept": "application/json"},
-            timeout=30
-        )
+        try:
+            response = requests.get(
+                f"{DB_REST_URL}/journeys",
+                params={
+                    "from": von_eva,
+                    "to": nach_eva,
+                    "departure": f"{datum}T10:00",
+                    "results": 5,
+                    "tickets": "true"
+                },
+                headers={"Accept": "application/json"},
+                timeout=30
+            )
 
-        if response.status_code == 200:
-            data = response.json()
-            if data.get('journeys'):
-                preise = []
-                for journey in data['journeys']:
-                    price = journey.get('price', {})
-                    if price.get('amount'):
-                        preise.append(price['amount'])
+            if response.status_code == 200:
+                data = response.json()
+                if data.get('journeys'):
+                    preise = []
+                    for journey in data['journeys']:
+                        price = journey.get('price', {})
+                        if price and price.get('amount'):
+                            preise.append(price['amount'])
 
-                if preise:
-                    return {
-                        "preis_min": min(preise),
-                        "preis_max": max(preise),
-                        "preis_avg": round(sum(preise) / len(preise), 2),
-                        "erfolg": True
-                    }
-    except Exception as e:
-        return {"erfolg": False, "fehler": str(e)}
+                    if preise:
+                        return {
+                            "preis_min": min(preise),
+                            "preis_max": max(preise),
+                            "preis_avg": round(sum(preise) / len(preise), 2),
+                            "quelle": "DB API",
+                            "erfolg": True
+                        }
+        except:
+            continue
 
-    return {"erfolg": False, "fehler": "Kein Preis gefunden"}
+    return {"erfolg": False}
 
 
 # === UI ===
@@ -175,7 +210,7 @@ if st.button("🔍 Berechnen", type="primary", use_container_width=True):
             von_data = BAHNHOEFE[von]
             nach_data = BAHNHOEFE[nach]
 
-            strecke = get_strecke_km(von_data["ds100"], nach_data["ds100"])
+            strecke = get_strecke_details(von_data["ds100"], nach_data["ds100"])
             preis = get_ticket_preis(von_data["eva"], nach_data["eva"])
 
         st.divider()
@@ -195,6 +230,17 @@ if st.button("🔍 Berechnen", type="primary", use_container_width=True):
             co2_auto = round(pkm * CO2_FAKTOREN["auto"] / 1000, 2)
             co2_ersparnis = round(co2_auto - co2_bahn, 2)
 
+            # Preis (API oder Schätzung)
+            if preis.get("erfolg"):
+                preis_anzeige = f"~{preis['preis_avg']:.0f} €"
+                preis_detail = f"{preis['preis_min']:.0f}-{preis['preis_max']:.0f} €"
+                preis_quelle = "DB API"
+            else:
+                preis_geschaetzt = round(km * PREIS_PRO_KM)
+                preis_anzeige = f"~{preis_geschaetzt} €"
+                preis_detail = "geschätzt"
+                preis_quelle = "Schätzung (18 ct/km)"
+
             # Anzeige
             st.subheader("📊 Ergebnis")
 
@@ -205,10 +251,7 @@ if st.button("🔍 Berechnen", type="primary", use_container_width=True):
             with col_b:
                 st.metric("Fahrzeit", f"{fahrzeit} min", delta=f"{round(fahrzeit/60, 1)} h")
             with col_c:
-                if preis.get("erfolg"):
-                    st.metric("Ticketpreis", f"~{preis['preis_avg']:.0f} €", delta=f"{preis['preis_min']:.0f}-{preis['preis_max']:.0f} €")
-                else:
-                    st.metric("Ticketpreis", "n/a")
+                st.metric("Ticketpreis", preis_anzeige, delta=preis_detail)
 
             st.divider()
 
@@ -227,6 +270,38 @@ if st.button("🔍 Berechnen", type="primary", use_container_width=True):
             with col_z:
                 st.metric("💚 Ersparnis", f"{co2_ersparnis * anzahl_personen:.1f} kg CO₂", delta=f"{round((1 - co2_bahn/co2_auto) * 100)}% weniger")
 
+            st.divider()
+
+            # Fahrstrecke
+            st.subheader("🗺️ Fahrstrecke")
+
+            # VzG-Strecken anzeigen
+            vzg = strecke.get("vzg_strecken", [])
+            if vzg:
+                route_text = f"**{von}**"
+                for i, s in enumerate(vzg):
+                    route_text += f" → VzG {s['nr']}"
+                route_text += f" → **{nach}**"
+                st.markdown(route_text)
+
+                with st.expander(f"📍 Alle {strecke['anzahl_stationen']} Betriebsstellen anzeigen"):
+                    # Tabelle mit Stationen
+                    stationen = strecke.get("stationen", [])
+
+                    # Nur jeden 5. Punkt zeigen (sonst zu viele)
+                    wichtige = [stationen[0]]  # Start
+                    for i, s in enumerate(stationen[1:-1], 1):
+                        if i % 10 == 0:  # Jeden 10. Punkt
+                            wichtige.append(s)
+                    wichtige.append(stationen[-1])  # Ende
+
+                    st.markdown("| DS100 | km | Status |")
+                    st.markdown("|-------|---:|--------|")
+                    for s in wichtige:
+                        st.markdown(f"| {s['ds100']} | {s['km']:.1f} | {s['halt']} |")
+
+                    st.caption(f"Vollständige Route: {strecke['anzahl_stationen']} Betriebsstellen")
+
             # Details
             with st.expander("📋 Details für Dokumentation"):
                 st.markdown(f"""
@@ -236,9 +311,13 @@ if st.button("🔍 Berechnen", type="primary", use_container_width=True):
 **Anzahl Personen:** {anzahl_personen}
 **Personenkilometer:** {km_gesamt:.0f} Pkm
 
+**Ticketpreis:** {preis_anzeige} ({preis_quelle})
+
 **CO₂-Emissionen (Bahn):** {co2_bahn * anzahl_personen:.2f} kg
 **CO₂-Emissionen (Auto-Vergleich):** {co2_auto * anzahl_personen:.2f} kg
 **CO₂-Ersparnis:** {co2_ersparnis * anzahl_personen:.2f} kg ({round((1 - co2_bahn/co2_auto) * 100)}%)
+
+**VzG-Strecken:** {', '.join([str(s['nr']) for s in vzg])}
 
 ---
 *Emissionsfaktoren: ICE 29 g/Pkm, PKW 154 g/Pkm (Quelle: UBA 2023)*
