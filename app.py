@@ -1,0 +1,258 @@
+"""
+Bahn-Streckenrechner für Green Consultants
+Berechnet Streckenkilometer, CO2-Emissionen und Ticketpreise
+
+Prototyp für BVGCD - Bundesverband Green Consultants Deutschland
+"""
+
+import streamlit as st
+import requests
+from datetime import datetime, timedelta
+
+# === Konfiguration ===
+
+st.set_page_config(
+    page_title="Bahn-Streckenrechner",
+    page_icon="🚄",
+    layout="centered"
+)
+
+# API URLs
+TRASSENFINDER_URL = "https://openapi.trassenfinder.de/api/v9"
+DB_REST_URL = "https://v6.db.transport.rest"
+
+# Bahnhöfe mit DS100 und EVA-Codes
+BAHNHOEFE = {
+    "Berlin Hbf": {"ds100": "BL", "eva": "8011160"},
+    "München Hbf": {"ds100": "MH", "eva": "8000261"},
+    "Hamburg Hbf": {"ds100": "AH", "eva": "8002549"},
+    "Köln Hbf": {"ds100": "KK", "eva": "8000207"},
+    "Frankfurt (Main) Hbf": {"ds100": "FF", "eva": "8000105"},
+    "Stuttgart Hbf": {"ds100": "TS", "eva": "8000096"},
+    "Düsseldorf Hbf": {"ds100": "KD", "eva": "8000085"},
+    "Hannover Hbf": {"ds100": "HH", "eva": "8000152"},
+    "Nürnberg Hbf": {"ds100": "NN", "eva": "8000284"},
+    "Leipzig Hbf": {"ds100": "LL", "eva": "8010205"},
+    "Dresden Hbf": {"ds100": "DD", "eva": "8010085"},
+    "Bremen Hbf": {"ds100": "HB", "eva": "8000050"},
+    "Dortmund Hbf": {"ds100": "EDO", "eva": "8000080"},
+    "Essen Hbf": {"ds100": "EE", "eva": "8000098"},
+    "Mannheim Hbf": {"ds100": "RM", "eva": "8000244"},
+    "Karlsruhe Hbf": {"ds100": "RK", "eva": "8000191"},
+    "Freiburg (Breisg) Hbf": {"ds100": "RF", "eva": "8000107"},
+    "Augsburg Hbf": {"ds100": "MA", "eva": "8000013"},
+}
+
+# CO2-Emissionsfaktoren (g/Pkm) - Quelle: UBA 2023
+CO2_FAKTOREN = {
+    "ice": 29,      # ICE Fernverkehr
+    "ic": 32,       # IC/EC
+    "regional": 55, # Regionalverkehr
+    "auto": 154,    # PKW (Durchschnitt)
+    "flug_kurz": 230,  # Kurzstrecke <1000km
+    "flug_lang": 195,  # Langstrecke >1000km
+}
+
+
+# === API-Funktionen ===
+
+@st.cache_data(ttl=3600)
+def get_strecke_km(von_ds100: str, nach_ds100: str) -> dict:
+    """Holt Streckenkilometer von der Trassenfinder API."""
+    payload = {
+        "infrastruktur_id": 19,
+        "sucheinstellungen": {
+            "an_abzeit": "2026-01-15T10:00:00+01:00",
+            "verkehrsart": "spfv_tw",
+            "zeitvorgabe_typ": "abzeit"
+        },
+        "wegpunkte": [
+            {"betriebsstelle": {"ds100": von_ds100, "mutter": True}},
+            {"betriebsstelle": {"ds100": nach_ds100, "mutter": True}}
+        ]
+    }
+
+    try:
+        response = requests.post(
+            f"{TRASSENFINDER_URL}/routen/suche",
+            json=payload,
+            headers={"Accept": "application/json"},
+            timeout=30
+        )
+
+        if response.status_code == 200:
+            data = response.json()
+            route = data['result']['gewichtete_route']
+            routenpunkte = route['routenpunkte']
+            letzter = routenpunkte[-1]
+
+            return {
+                "strecke_km": round(letzter['laufende_hm'] / 10, 1),
+                "fahrzeit_min": letzter['technische_fahrzeit_info']['ankunft_min'],
+                "anzahl_stationen": len(routenpunkte),
+                "erfolg": True
+            }
+    except Exception as e:
+        return {"erfolg": False, "fehler": str(e)}
+
+    return {"erfolg": False, "fehler": "API-Fehler"}
+
+
+@st.cache_data(ttl=1800)
+def get_ticket_preis(von_eva: str, nach_eva: str) -> dict:
+    """Holt Ticketpreis von der DB REST API."""
+    morgen = (datetime.now() + timedelta(days=7)).strftime("%Y-%m-%d")
+
+    try:
+        response = requests.get(
+            f"{DB_REST_URL}/journeys",
+            params={
+                "from": von_eva,
+                "to": nach_eva,
+                "departure": f"{morgen}T10:00",
+                "results": 3,
+                "tickets": "true"
+            },
+            headers={"Accept": "application/json"},
+            timeout=30
+        )
+
+        if response.status_code == 200:
+            data = response.json()
+            if data.get('journeys'):
+                preise = []
+                for journey in data['journeys']:
+                    price = journey.get('price', {})
+                    if price.get('amount'):
+                        preise.append(price['amount'])
+
+                if preise:
+                    return {
+                        "preis_min": min(preise),
+                        "preis_max": max(preise),
+                        "preis_avg": round(sum(preise) / len(preise), 2),
+                        "erfolg": True
+                    }
+    except Exception as e:
+        return {"erfolg": False, "fehler": str(e)}
+
+    return {"erfolg": False, "fehler": "Kein Preis gefunden"}
+
+
+# === UI ===
+
+st.title("🚄 Bahn-Streckenrechner")
+st.markdown("**Für Green Consultants** - Berechnet Streckenkilometer, CO2-Emissionen und Ticketpreise")
+
+st.divider()
+
+# Eingabe
+col1, col2 = st.columns(2)
+
+with col1:
+    von = st.selectbox("Von", options=list(BAHNHOEFE.keys()), index=0)
+
+with col2:
+    nach = st.selectbox("Nach", options=list(BAHNHOEFE.keys()), index=1)
+
+# Optionen
+col3, col4 = st.columns(2)
+
+with col3:
+    anzahl_personen = st.number_input("Anzahl Personen", min_value=1, max_value=100, value=1)
+
+with col4:
+    hin_rueck = st.checkbox("Hin- und Rückfahrt", value=False)
+
+# Berechnen Button
+if st.button("🔍 Berechnen", type="primary", use_container_width=True):
+
+    if von == nach:
+        st.error("Start und Ziel müssen unterschiedlich sein!")
+    else:
+        with st.spinner("Berechne Route..."):
+            # Daten abrufen
+            von_data = BAHNHOEFE[von]
+            nach_data = BAHNHOEFE[nach]
+
+            strecke = get_strecke_km(von_data["ds100"], nach_data["ds100"])
+            preis = get_ticket_preis(von_data["eva"], nach_data["eva"])
+
+        st.divider()
+
+        # Ergebnisse
+        if strecke.get("erfolg"):
+            km = strecke["strecke_km"]
+            fahrzeit = strecke["fahrzeit_min"]
+
+            # Multiplikatoren
+            faktor = 2 if hin_rueck else 1
+            km_gesamt = km * faktor * anzahl_personen
+            pkm = km * faktor  # Personenkilometer pro Person
+
+            # CO2 Berechnung
+            co2_bahn = round(pkm * CO2_FAKTOREN["ice"] / 1000, 2)  # kg
+            co2_auto = round(pkm * CO2_FAKTOREN["auto"] / 1000, 2)
+            co2_ersparnis = round(co2_auto - co2_bahn, 2)
+
+            # Anzeige
+            st.subheader("📊 Ergebnis")
+
+            col_a, col_b, col_c = st.columns(3)
+
+            with col_a:
+                st.metric("Strecke", f"{km} km", delta=f"{'x2 (H+R)' if hin_rueck else 'einfach'}")
+            with col_b:
+                st.metric("Fahrzeit", f"{fahrzeit} min", delta=f"{round(fahrzeit/60, 1)} h")
+            with col_c:
+                if preis.get("erfolg"):
+                    st.metric("Ticketpreis", f"~{preis['preis_avg']:.0f} €", delta=f"{preis['preis_min']:.0f}-{preis['preis_max']:.0f} €")
+                else:
+                    st.metric("Ticketpreis", "n/a")
+
+            st.divider()
+
+            # CO2 Vergleich
+            st.subheader("🌱 CO2-Bilanz")
+
+            if anzahl_personen > 1:
+                st.info(f"Berechnung für **{anzahl_personen} Personen** × {km} km {'(Hin+Rück)' if hin_rueck else ''} = **{km_gesamt:.0f} Personen-km**")
+
+            col_x, col_y, col_z = st.columns(3)
+
+            with col_x:
+                st.metric("🚄 Bahn (ICE)", f"{co2_bahn * anzahl_personen:.1f} kg CO₂")
+            with col_y:
+                st.metric("🚗 Auto (Vergleich)", f"{co2_auto * anzahl_personen:.1f} kg CO₂")
+            with col_z:
+                st.metric("💚 Ersparnis", f"{co2_ersparnis * anzahl_personen:.1f} kg CO₂", delta=f"{round((1 - co2_bahn/co2_auto) * 100)}% weniger")
+
+            # Details
+            with st.expander("📋 Details für Dokumentation"):
+                st.markdown(f"""
+**Route:** {von} → {nach}
+**Strecke:** {km} km {'(Hin- und Rückfahrt: ' + str(km*2) + ' km)' if hin_rueck else ''}
+**Fahrzeit:** {fahrzeit} Minuten ({round(fahrzeit/60, 1)} Stunden)
+**Anzahl Personen:** {anzahl_personen}
+**Personenkilometer:** {km_gesamt:.0f} Pkm
+
+**CO₂-Emissionen (Bahn):** {co2_bahn * anzahl_personen:.2f} kg
+**CO₂-Emissionen (Auto-Vergleich):** {co2_auto * anzahl_personen:.2f} kg
+**CO₂-Ersparnis:** {co2_ersparnis * anzahl_personen:.2f} kg ({round((1 - co2_bahn/co2_auto) * 100)}%)
+
+---
+*Emissionsfaktoren: ICE 29 g/Pkm, PKW 154 g/Pkm (Quelle: UBA 2023)*
+*Streckendaten: DB InfraGO Trassenfinder API*
+                """)
+
+        else:
+            st.error(f"Fehler bei der Streckenberechnung: {strecke.get('fehler', 'Unbekannt')}")
+
+# Footer
+st.divider()
+st.markdown("""
+<div style="text-align: center; color: gray; font-size: 0.8em;">
+    <p>Prototyp für <b>BVGCD</b> - Bundesverband Green Consultants Deutschland</p>
+    <p>Datenquellen: DB InfraGO (Trassenfinder), DB REST API, UBA (Emissionsfaktoren)</p>
+</div>
+""", unsafe_allow_html=True)

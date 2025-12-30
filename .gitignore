@@ -1,0 +1,7 @@
+__pycache__/
+*.py[cod]
+.env
+.venv/
+*.png
+*.html
+trassenfinder_openapi_v9.json
