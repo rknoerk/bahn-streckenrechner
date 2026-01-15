@@ -303,7 +303,7 @@ def search_stations(searchterm: str) -> list:
     if not searchterm or len(searchterm) < 2:
         return []
 
-    # Fallback: Lokale Suche in vordefinierten Bahnhöfen
+    # Lokale Suche in vordefinierten Bahnhöfen (immer verfügbar)
     local_results = [
         (name, {"name": name, "eva": data["eva"], "ds100_hint": data["ds100"]})
         for name, data in BAHNHOEFE.items()
@@ -311,6 +311,7 @@ def search_stations(searchterm: str) -> list:
     ]
 
     # API-Suche versuchen
+    api_results = []
     try:
         response = requests.get(
             f"{DB_REST_URL}/locations",
@@ -321,15 +322,13 @@ def search_stations(searchterm: str) -> list:
                 "poi": "false"
             },
             headers={"Accept": "application/json"},
-            timeout=15  # Erhöht für langsame Verbindungen
+            timeout=15
         )
 
         if response.status_code == 200:
             data = response.json()
-            api_results = []
 
             for station in data:
-                # Alle Bahnhöfe mit Zugverkehr anzeigen
                 products = station.get("products", {})
                 is_train_station = (
                     products.get("national") or
@@ -341,8 +340,6 @@ def search_stations(searchterm: str) -> list:
                 if station.get("type") in ("stop", "station") and is_train_station:
                     eva_id = station.get("id")
                     name = station.get("name", "")
-
-                    # RIL100 aus Response extrahieren falls vorhanden
                     ril100 = None
                     ril100_ids = station.get("ril100Ids", [])
                     if ril100_ids:
@@ -356,14 +353,12 @@ def search_stations(searchterm: str) -> list:
                             "ds100_hint": ril100
                         }
                     ))
-
-            if api_results:
-                return api_results[:10]
-
     except Exception as e:
         print(f"Bahnhofssuche API-Fehler: {e}")
 
-    # Fallback auf lokale Ergebnisse wenn API fehlschlägt
+    # API-Ergebnisse haben Priorität, sonst lokale Ergebnisse
+    if api_results:
+        return api_results[:10]
     return local_results[:10]
 
 
