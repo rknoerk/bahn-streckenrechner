@@ -8,6 +8,7 @@ Prototyp für BVGCD - Bundesverband Green Consultants Deutschland
 import streamlit as st
 import requests
 from datetime import datetime, timedelta
+from streamlit_searchbox import st_searchbox
 
 # === Konfiguration ===
 
@@ -136,78 +137,96 @@ PREIS_PRO_KM = 0.18  # ca. 18 Cent/km für Flexpreis
 @st.cache_data(ttl=3600)
 def get_strecke_details(von_ds100: str, nach_ds100: str) -> dict:
     """Holt Streckenkilometer und Routenverlauf von der Trassenfinder API."""
-    payload = {
-        "infrastruktur_id": 19,
-        "sucheinstellungen": {
-            "an_abzeit": "2026-01-15T10:00:00+01:00",
-            "verkehrsart": "spfv_tw",
-            "zeitvorgabe_typ": "abzeit"
-        },
-        "wegpunkte": [
+    # Versuche verschiedene Kombinationen:
+    # 1. Mit mutter=true (für große Knotenpunkte)
+    # 2. Ohne mutter (für kleinere Stationen)
+    wegpunkt_varianten = [
+        [
             {"betriebsstelle": {"ds100": von_ds100, "mutter": True}},
             {"betriebsstelle": {"ds100": nach_ds100, "mutter": True}}
-        ]
-    }
+        ],
+        [
+            {"betriebsstelle": {"ds100": von_ds100}},
+            {"betriebsstelle": {"ds100": nach_ds100}}
+        ],
+    ]
 
-    try:
-        response = requests.post(
-            f"{TRASSENFINDER_URL}/routen/suche",
-            json=payload,
-            headers={"Accept": "application/json"},
-            timeout=30
-        )
+    verkehrsarten = ["spfv_tw", "spnv_tw"]  # Fernverkehr elektrisch, Nahverkehr elektrisch
 
-        if response.status_code == 200:
-            data = response.json()
-            route = data['result']['gewichtete_route']
-            routenpunkte = route['routenpunkte']
-            letzter = routenpunkte[-1]
-
-            # Wichtige Bahnhöfe auf der Route finden (die in DS100_NAMEN sind)
-            wichtige_halte = []
-            gesehene_namen = set()
-            for punkt in routenpunkte:
-                ds100 = punkt.get('ds100', '')
-                # Prüfe ob dieser Bahnhof ein wichtiger ICE-Halt ist
-                if ds100 in DS100_NAMEN:
-                    name = DS100_NAMEN[ds100]
-                    km = punkt.get('laufende_hm', 0) / 10
-                    # Duplikate vermeiden (z.B. bei Bahnhofsteilen wie UE L, UE F)
-                    if name not in gesehene_namen:
-                        gesehene_namen.add(name)
-                        wichtige_halte.append({
-                            'ds100': ds100,
-                            'name': name,
-                            'km': km,
-                        })
-
-            # VzG-Strecken sammeln
-            vzg_strecken = []
-            for punkt in routenpunkte:
-                seg = punkt.get('naechstes_streckensegment', {})
-                if seg and seg.get('streckennummer'):
-                    nr = seg['streckennummer']
-                    if not vzg_strecken or vzg_strecken[-1]['nr'] != nr:
-                        vzg_strecken.append({
-                            'nr': nr,
-                            'von': seg.get('von', ''),
-                            'bis': seg.get('bis', '')
-                        })
-                    else:
-                        vzg_strecken[-1]['bis'] = seg.get('bis', '')
-
-            return {
-                "strecke_km": round(letzter['laufende_hm'] / 10, 1),
-                "fahrzeit_min": letzter['technische_fahrzeit_info']['ankunft_min'],
-                "anzahl_betriebsstellen": len(routenpunkte),
-                "halte": wichtige_halte,
-                "vzg_strecken": vzg_strecken,
-                "erfolg": True
+    for wegpunkte in wegpunkt_varianten:
+        for verkehrsart in verkehrsarten:
+            payload = {
+                "infrastruktur_id": 19,
+                "sucheinstellungen": {
+                    "an_abzeit": "2026-01-15T10:00:00+01:00",
+                    "verkehrsart": verkehrsart,
+                    "zeitvorgabe_typ": "abzeit"
+                },
+                "wegpunkte": wegpunkte
             }
-    except Exception as e:
-        return {"erfolg": False, "fehler": str(e)}
 
-    return {"erfolg": False, "fehler": "API-Fehler"}
+            try:
+                response = requests.post(
+                    f"{TRASSENFINDER_URL}/routen/suche",
+                    json=payload,
+                    headers={"Accept": "application/json"},
+                    timeout=30
+                )
+
+                if response.status_code == 200:
+                    data = response.json()
+
+                    # Prüfe ob Route gefunden wurde
+                    if "failure" in data or "result" not in data:
+                        continue
+
+                    route = data['result']['gewichtete_route']
+                    routenpunkte = route['routenpunkte']
+                    letzter = routenpunkte[-1]
+
+                    # Wichtige Bahnhöfe auf der Route finden (die in DS100_NAMEN sind)
+                    wichtige_halte = []
+                    gesehene_namen = set()
+                    for punkt in routenpunkte:
+                        ds100 = punkt.get('ds100', '')
+                        if ds100 in DS100_NAMEN:
+                            name = DS100_NAMEN[ds100]
+                            km = punkt.get('laufende_hm', 0) / 10
+                            if name not in gesehene_namen:
+                                gesehene_namen.add(name)
+                                wichtige_halte.append({
+                                    'ds100': ds100,
+                                    'name': name,
+                                    'km': km,
+                                })
+
+                    # VzG-Strecken sammeln
+                    vzg_strecken = []
+                    for punkt in routenpunkte:
+                        seg = punkt.get('naechstes_streckensegment', {})
+                        if seg and seg.get('streckennummer'):
+                            nr = seg['streckennummer']
+                            if not vzg_strecken or vzg_strecken[-1]['nr'] != nr:
+                                vzg_strecken.append({
+                                    'nr': nr,
+                                    'von': seg.get('von', ''),
+                                    'bis': seg.get('bis', '')
+                                })
+                            else:
+                                vzg_strecken[-1]['bis'] = seg.get('bis', '')
+
+                    return {
+                        "strecke_km": round(letzter['laufende_hm'] / 10, 1),
+                        "fahrzeit_min": letzter['technische_fahrzeit_info']['ankunft_min'],
+                        "anzahl_betriebsstellen": len(routenpunkte),
+                        "halte": wichtige_halte,
+                        "vzg_strecken": vzg_strecken,
+                        "erfolg": True
+                    }
+            except Exception:
+                continue
+
+    return {"erfolg": False, "fehler": "Streckenberechnung nicht möglich. Die Station liegt möglicherweise auf einer nicht-elektrifizierten Nebenstrecke."}
 
 
 @st.cache_data(ttl=1800)
@@ -254,6 +273,124 @@ def get_ticket_preis(von_eva: str, nach_eva: str) -> dict:
     return {"erfolg": False}
 
 
+# === Bahnhofssuche ===
+
+@st.cache_data(ttl=86400)
+def get_station_ds100(eva_id: str) -> dict:
+    """Holt DS100/RIL100 Code für einen Bahnhof anhand der EVA-Nummer."""
+    try:
+        response = requests.get(
+            f"{DB_REST_URL}/stations/{eva_id}",
+            headers={"Accept": "application/json"},
+            timeout=10
+        )
+        if response.status_code == 200:
+            data = response.json()
+            ril100 = data.get("ril100")
+            if ril100:
+                return {
+                    "ds100": ril100,
+                    "name": data.get("name", ""),
+                    "erfolg": True
+                }
+    except Exception:
+        pass
+    return {"erfolg": False}
+
+
+def search_stations(searchterm: str) -> list:
+    """Sucht Bahnhöfe und gibt Liste von (Anzeigename, Daten) Tupeln zurück."""
+    if not searchterm or len(searchterm) < 2:
+        return []
+
+    try:
+        response = requests.get(
+            f"{DB_REST_URL}/locations",
+            params={
+                "query": searchterm,
+                "results": 15,
+                "addresses": "false",
+                "poi": "false"
+            },
+            headers={"Accept": "application/json"},
+            timeout=10
+        )
+
+        if response.status_code == 200:
+            data = response.json()
+            results = []
+
+            for station in data:
+                # Alle Bahnhöfe mit Zugverkehr anzeigen
+                products = station.get("products", {})
+                is_train_station = (
+                    products.get("national") or
+                    products.get("nationalExpress") or
+                    products.get("regional") or
+                    products.get("regionalExpress")
+                )
+
+                if station.get("type") in ("stop", "station") and is_train_station:
+                    eva_id = station.get("id")
+                    name = station.get("name", "")
+
+                    # RIL100 aus Response extrahieren falls vorhanden
+                    ril100 = None
+                    ril100_ids = station.get("ril100Ids", [])
+                    if ril100_ids:
+                        ril100 = ril100_ids[0]
+
+                    results.append((
+                        name,
+                        {
+                            "name": name,
+                            "eva": eva_id,
+                            "ds100_hint": ril100
+                        }
+                    ))
+
+            return results[:10]
+    except Exception:
+        pass
+
+    return []
+
+
+def resolve_station_ds100(station_data: dict) -> dict:
+    """Löst den DS100-Code für einen Bahnhof auf."""
+    if not station_data:
+        return {"erfolg": False, "fehler": "Kein Bahnhof ausgewählt"}
+
+    # Prüfe ob DS100 bereits bekannt
+    if station_data.get("ds100_hint"):
+        return {
+            "name": station_data["name"],
+            "eva": station_data["eva"],
+            "ds100": station_data["ds100_hint"],
+            "erfolg": True
+        }
+
+    # Nachschlagen via /stations/:eva
+    eva = station_data.get("eva")
+    if eva:
+        lookup = get_station_ds100(eva)
+        if lookup.get("erfolg"):
+            return {
+                "name": station_data["name"],
+                "eva": eva,
+                "ds100": lookup["ds100"],
+                "erfolg": True
+            }
+
+    return {
+        "name": station_data.get("name", ""),
+        "eva": station_data.get("eva"),
+        "ds100": None,
+        "erfolg": False,
+        "fehler": "DS100-Code nicht verfügbar"
+    }
+
+
 # === UI ===
 
 st.title("🚄 Bahn-Streckenrechner")
@@ -262,13 +399,25 @@ st.markdown("**Für Green Consultants** - Berechnet Streckenkilometer, CO2-Emiss
 st.divider()
 
 # Eingabe
+st.markdown("**Start- und Zielbahnhof** (mind. 2 Buchstaben eingeben)")
+
 col1, col2 = st.columns(2)
 
 with col1:
-    von = st.selectbox("Von", options=list(BAHNHOEFE.keys()), index=0)
+    von_selection = st_searchbox(
+        search_stations,
+        placeholder="Startbahnhof suchen...",
+        key="von_search",
+        clear_on_submit=False,
+    )
 
 with col2:
-    nach = st.selectbox("Nach", options=list(BAHNHOEFE.keys()), index=1)
+    nach_selection = st_searchbox(
+        search_stations,
+        placeholder="Zielbahnhof suchen...",
+        key="nach_search",
+        clear_on_submit=False,
+    )
 
 # Optionen
 col3, col4 = st.columns(2)
@@ -282,16 +431,33 @@ with col4:
 # Berechnen Button
 if st.button("🔍 Berechnen", type="primary", use_container_width=True):
 
-    if von == nach:
+    # Validierung
+    if not von_selection or not nach_selection:
+        st.error("Bitte Start- und Zielbahnhof auswählen!")
+    elif von_selection.get("eva") == nach_selection.get("eva"):
         st.error("Start und Ziel müssen unterschiedlich sein!")
     else:
         with st.spinner("Berechne Route..."):
-            # Daten abrufen
-            von_data = BAHNHOEFE[von]
-            nach_data = BAHNHOEFE[nach]
+            # DS100-Codes auflösen
+            von_resolved = resolve_station_ds100(von_selection)
+            nach_resolved = resolve_station_ds100(nach_selection)
 
-            strecke = get_strecke_details(von_data["ds100"], nach_data["ds100"])
-            preis = get_ticket_preis(von_data["eva"], nach_data["eva"])
+            # Namen für Anzeige
+            von = von_resolved.get("name", "Start")
+            nach = nach_resolved.get("name", "Ziel")
+
+            if not von_resolved.get("erfolg"):
+                st.error(f"Streckenberechnung für '{von}' nicht möglich: DS100-Code fehlt")
+                strecke = {"erfolg": False}
+                preis = {"erfolg": False}
+            elif not nach_resolved.get("erfolg"):
+                st.error(f"Streckenberechnung für '{nach}' nicht möglich: DS100-Code fehlt")
+                strecke = {"erfolg": False}
+                preis = {"erfolg": False}
+            else:
+                # Daten abrufen
+                strecke = get_strecke_details(von_resolved["ds100"], nach_resolved["ds100"])
+                preis = get_ticket_preis(von_resolved["eva"], nach_resolved["eva"])
 
         st.divider()
 
