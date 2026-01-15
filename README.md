@@ -1,63 +1,96 @@
-# 🚄 Bahn-Streckenrechner
+# Bahn-Streckenrechner
 
-**Für Green Consultants** - Berechnet Streckenkilometer, CO2-Emissionen und Ticketpreise für Bahnreisen.
+Ein kostenloses Online-Tool zur Berechnung von Bahnstrecken, Ticketpreisen und CO2-Einsparungen.
 
-## Features
-
-- ✅ Exakte Streckenkilometer (Daten: DB InfraGO Trassenfinder)
-- ✅ Aktuelle Ticketpreise (Daten: DB REST API)
-- ✅ CO2-Berechnung mit Vergleich Bahn vs. Auto
-- ✅ Unterstützung für Gruppenreisen und Hin-/Rückfahrt
-- ✅ Export-Daten für Green-Motion-Dokumentation
-
-## Live Demo
-
-🔗 [https://bahn-streckenrechner.streamlit.app](https://bahn-streckenrechner.streamlit.app)
-
-## Lokale Installation
-
-```bash
-# Repository klonen
-git clone https://github.com/DEIN-USERNAME/bahn-streckenrechner.git
-cd bahn-streckenrechner
-
-# Abhängigkeiten installieren
-pip install -r requirements.txt
-
-# App starten
-streamlit run app.py
-```
-
-## Deployment auf Streamlit Cloud
-
-1. Repository auf GitHub pushen
-2. Auf [share.streamlit.io](https://share.streamlit.io) einloggen
-3. "New app" → Repository auswählen → Deploy
-
-## Datenquellen
-
-| Daten | Quelle | API |
-|-------|--------|-----|
-| Streckenkilometer | DB InfraGO | [Trassenfinder OpenAPI](https://openapi.trassenfinder.de) |
-| Ticketpreise | Deutsche Bahn | [v6.db.transport.rest](https://v6.db.transport.rest) |
-| CO2-Faktoren | Umweltbundesamt | [UBA 2023](https://www.umweltbundesamt.de) |
-
-## CO2-Emissionsfaktoren
-
-| Verkehrsmittel | g CO₂/Pkm |
-|----------------|-----------|
-| ICE Fernverkehr | 29 |
-| IC/EC | 32 |
-| Regionalverkehr | 55 |
-| PKW (Durchschnitt) | 154 |
-| Flug (Kurzstrecke) | 230 |
-
-*Quelle: Umweltbundesamt 2023*
-
-## Lizenz
-
-MIT - Frei verwendbar für Green Consultants und nachhaltige Filmproduktion.
+**Live nutzen:** [bahn-streckenrechner.streamlit.app](https://bahn-streckenrechner.streamlit.app)
 
 ---
 
-Entwickelt für **BVGCD** - Bundesverband Green Consultants Deutschland
+## Was macht dieses Tool?
+
+Der Bahn-Streckenrechner hilft dir, Bahnreisen zu planen und zu dokumentieren:
+
+1. **Streckenkilometer berechnen** - Wie weit ist es wirklich mit dem Zug? (nicht Luftlinie, sondern die tatsächliche Schienenstrecke)
+2. **Ticketpreise anzeigen** - Was kostet die Fahrt ungefähr?
+3. **CO2-Ersparnis berechnen** - Wie viel CO2 spare ich im Vergleich zum Auto?
+
+## Für wen ist das Tool?
+
+- **Green Consultants** in der Film- und Medienbranche
+- Alle, die ihre CO2-Ersparnis durch Bahnfahren dokumentieren möchten
+- Unternehmen, die nachhaltige Dienstreisen nachweisen wollen
+
+## So funktioniert's
+
+1. **Startbahnhof eingeben** - Tippe mindestens 2 Buchstaben und wähle aus den Vorschlägen
+2. **Zielbahnhof eingeben** - Gleiches Prinzip
+3. **Anzahl Personen** - Für Gruppenreisen
+4. **Hin- und Rückfahrt** - Checkbox aktivieren für Rundreise
+5. **Berechnen klicken** - Fertig!
+
+## Was bedeuten die Ergebnisse?
+
+| Ergebnis | Erklärung |
+|----------|-----------|
+| **Strecke (km)** | Die tatsächliche Länge der Bahnstrecke in Kilometern |
+| **Fahrzeit** | Ungefähre Fahrzeit basierend auf der Strecke |
+| **Ticketpreis** | Aktueller Durchschnittspreis laut Deutsche Bahn |
+| **CO2 Bahn** | CO2-Ausstoß für diese Zugfahrt in Kilogramm |
+| **CO2 Auto** | CO2-Ausstoß, wenn du die gleiche Strecke mit dem Auto fahren würdest |
+| **Ersparnis** | So viel CO2 sparst du durch die Zugfahrt |
+
+## Welche Bahnhöfe werden unterstützt?
+
+Das Tool unterstützt alle deutschen Bahnhöfe mit Zugverkehr. Bei kleineren Bahnhöfen auf nicht-elektrifizierten Nebenstrecken kann die Streckenberechnung eingeschränkt sein.
+
+## Woher kommen die Daten?
+
+| Daten | Quelle |
+|-------|--------|
+| Streckenkilometer | DB InfraGO (Trassenfinder) |
+| Ticketpreise | Deutsche Bahn |
+| CO2-Werte | Umweltbundesamt 2023 |
+
+### CO2-Werte im Detail
+
+| Verkehrsmittel | Gramm CO2 pro Kilometer |
+|----------------|-------------------------|
+| ICE | 29 g |
+| IC/EC | 32 g |
+| Regionalbahn | 55 g |
+| Auto (Durchschnitt) | 154 g |
+| Flugzeug (Kurzstrecke) | 230 g |
+
+---
+
+## Für Entwickler
+
+<details>
+<summary>Technische Details (klicken zum Aufklappen)</summary>
+
+### Lokale Installation
+
+```bash
+git clone https://github.com/rknoerk/bahn-streckenrechner.git
+cd bahn-streckenrechner
+pip install -r requirements.txt
+streamlit run app.py
+```
+
+### Technologie
+
+- Python + Streamlit
+- DB REST API (Ticketpreise, Bahnhofssuche)
+- Trassenfinder OpenAPI (Streckenkilometer)
+
+### Deployment
+
+Die App läuft auf Streamlit Cloud. Einfach Repository forken und auf [share.streamlit.io](https://share.streamlit.io) deployen.
+
+</details>
+
+---
+
+**Lizenz:** MIT - Frei nutzbar
+
+Entwickelt für den **BVGCD** - Bundesverband Green Consultants Deutschland
