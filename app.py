@@ -303,22 +303,30 @@ def search_stations(searchterm: str) -> list:
     if not searchterm or len(searchterm) < 2:
         return []
 
+    # Fallback: Lokale Suche in vordefinierten Bahnhöfen
+    local_results = [
+        (name, {"name": name, "eva": data["eva"], "ds100_hint": data["ds100"]})
+        for name, data in BAHNHOEFE.items()
+        if searchterm.lower() in name.lower()
+    ]
+
+    # API-Suche versuchen
     try:
         response = requests.get(
             f"{DB_REST_URL}/locations",
             params={
                 "query": searchterm,
-                "results": 15,
+                "results": 10,
                 "addresses": "false",
                 "poi": "false"
             },
             headers={"Accept": "application/json"},
-            timeout=10
+            timeout=15  # Erhöht für langsame Verbindungen
         )
 
         if response.status_code == 200:
             data = response.json()
-            results = []
+            api_results = []
 
             for station in data:
                 # Alle Bahnhöfe mit Zugverkehr anzeigen
@@ -340,7 +348,7 @@ def search_stations(searchterm: str) -> list:
                     if ril100_ids:
                         ril100 = ril100_ids[0]
 
-                    results.append((
+                    api_results.append((
                         name,
                         {
                             "name": name,
@@ -349,11 +357,14 @@ def search_stations(searchterm: str) -> list:
                         }
                     ))
 
-            return results[:10]
-    except Exception:
-        pass
+            if api_results:
+                return api_results[:10]
 
-    return []
+    except Exception as e:
+        print(f"Bahnhofssuche API-Fehler: {e}")
+
+    # Fallback auf lokale Ergebnisse wenn API fehlschlägt
+    return local_results[:10]
 
 
 def resolve_station_ds100(station_data: dict) -> dict:
