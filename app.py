@@ -25,10 +25,17 @@ DB_REST_URL = "https://v6.db.transport.rest"
 # Bahnhöfe mit DS100 und EVA-Codes
 BAHNHOEFE = {
     "Berlin Hbf": {"ds100": "BL", "eva": "8011160"},
+    "Berlin Südkreuz": {"ds100": "BLS", "eva": "8011113"},
+    "Berlin-Spandau": {"ds100": "BSPD", "eva": "8010404"},
     "München Hbf": {"ds100": "MH", "eva": "8000261"},
+    "München-Pasing": {"ds100": "MPA", "eva": "8004158"},
     "Hamburg Hbf": {"ds100": "AH", "eva": "8002549"},
+    "Hamburg-Altona": {"ds100": "AAL", "eva": "8002553"},
+    "Hamburg-Harburg": {"ds100": "AHAR", "eva": "8000147"},
     "Köln Hbf": {"ds100": "KK", "eva": "8000207"},
+    "Köln Messe/Deutz": {"ds100": "KKDZ", "eva": "8003320"},
     "Frankfurt (Main) Hbf": {"ds100": "FF", "eva": "8000105"},
+    "Frankfurt Flughafen Fernbf": {"ds100": "FFLU", "eva": "8070003"},
     "Stuttgart Hbf": {"ds100": "TS", "eva": "8000096"},
     "Düsseldorf Hbf": {"ds100": "KD", "eva": "8000085"},
     "Hannover Hbf": {"ds100": "HH", "eva": "8000152"},
@@ -42,6 +49,29 @@ BAHNHOEFE = {
     "Karlsruhe Hbf": {"ds100": "RK", "eva": "8000191"},
     "Freiburg (Breisg) Hbf": {"ds100": "RF", "eva": "8000107"},
     "Augsburg Hbf": {"ds100": "MA", "eva": "8000013"},
+    "Erfurt Hbf": {"ds100": "UE", "eva": "8010101"},
+    "Kassel-Wilhelmshöhe": {"ds100": "FKW", "eva": "8003200"},
+    "Bonn Hbf": {"ds100": "KBO", "eva": "8000044"},
+    "Koblenz Hbf": {"ds100": "KO", "eva": "8000206"},
+    "Mainz Hbf": {"ds100": "FMZ", "eva": "8000240"},
+    "Wiesbaden Hbf": {"ds100": "FWI", "eva": "8000250"},
+    "Würzburg Hbf": {"ds100": "NWÜ", "eva": "8000260"},
+    "Ulm Hbf": {"ds100": "TU", "eva": "8000170"},
+    "Heidelberg Hbf": {"ds100": "RH", "eva": "8000156"},
+    "Saarbrücken Hbf": {"ds100": "SSB", "eva": "8000323"},
+    "Münster (Westf) Hbf": {"ds100": "EMST", "eva": "8000263"},
+    "Duisburg Hbf": {"ds100": "EDG", "eva": "8000086"},
+    "Bochum Hbf": {"ds100": "EBHF", "eva": "8000041"},
+    "Rostock Hbf": {"ds100": "WRSK", "eva": "8010304"},
+    "Schwerin Hbf": {"ds100": "WR", "eva": "8010324"},
+    "Fulda": {"ds100": "FFU", "eva": "8000128"},
+    "Göttingen": {"ds100": "HG", "eva": "8000128"},
+    "Ingolstadt Hbf": {"ds100": "MIN", "eva": "8000183"},
+    "Regensburg Hbf": {"ds100": "NR", "eva": "8000309"},
+    "Aachen Hbf": {"ds100": "KA", "eva": "8000001"},
+    "Halle (Saale) Hbf": {"ds100": "LH", "eva": "8010159"},
+    "Braunschweig Hbf": {"ds100": "HBS", "eva": "8000049"},
+    "Wolfsburg Hbf": {"ds100": "HWO", "eva": "8006552"},
 }
 
 # DS100 → Bahnhofsname Mapping (wichtige ICE-Halte)
@@ -134,6 +164,24 @@ PREIS_PRO_KM = 0.18  # ca. 18 Cent/km für Flexpreis
 
 # === API-Funktionen ===
 
+@st.cache_data(ttl=86400)
+def get_infrastruktur_id() -> int:
+    """Holt die aktuelle Infrastruktur-ID vom Trassenfinder (ändert sich jährlich)."""
+    try:
+        response = requests.get(
+            f"{TRASSENFINDER_URL}/infrastrukturen",
+            headers={"Accept": "application/json"},
+            timeout=10
+        )
+        if response.status_code == 200:
+            data = response.json()
+            if data:
+                return data[-1]["id"]
+    except Exception:
+        pass
+    return 7  # Fallback: Jahresfahrplan 2026
+
+
 @st.cache_data(ttl=3600)
 def get_strecke_details(von_ds100: str, nach_ds100: str) -> dict:
     """Holt Streckenkilometer und Routenverlauf von der Trassenfinder API."""
@@ -152,11 +200,12 @@ def get_strecke_details(von_ds100: str, nach_ds100: str) -> dict:
     ]
 
     verkehrsarten = ["spfv_tw", "spnv_tw"]  # Fernverkehr elektrisch, Nahverkehr elektrisch
+    infra_id = get_infrastruktur_id()
 
     for wegpunkte in wegpunkt_varianten:
         for verkehrsart in verkehrsarten:
             payload = {
-                "infrastruktur_id": 19,
+                "infrastruktur_id": infra_id,
                 "sucheinstellungen": {
                     "an_abzeit": "2026-01-15T10:00:00+01:00",
                     "verkehrsart": verkehrsart,
@@ -304,10 +353,12 @@ def search_stations(searchterm: str) -> list:
         return []
 
     # Lokale Suche in vordefinierten Bahnhöfen (immer verfügbar)
+    # Normalisiere Bindestriche/Leerzeichen für flexibleren Match
+    term = searchterm.lower().replace("-", " ")
     local_results = [
         (name, {"name": name, "eva": data["eva"], "ds100_hint": data["ds100"]})
         for name, data in BAHNHOEFE.items()
-        if searchterm.lower() in name.lower()
+        if term in name.lower().replace("-", " ")
     ]
 
     # API-Suche versuchen
@@ -322,7 +373,7 @@ def search_stations(searchterm: str) -> list:
                 "poi": "false"
             },
             headers={"Accept": "application/json"},
-            timeout=15
+            timeout=(1.5, 3)
         )
 
         if response.status_code == 200:
